@@ -1,0 +1,55 @@
+--- pd-mapper.c
++++ pd-mapper.c
+@@ -275,16 +296,28 @@ static int pd_enumerate_jsons(struct assoc *json_set)
+ 
+ 		firmware_value[n] = '\0';
+ 
+-		if (strlen(FIRMWARE_BASE) + strlen(firmware_value) + 1 > sizeof(path))
++		/* first try to open path from sysfs */
++		if (strlen(firmware_sysfs_path) + 1 + strlen(firmware_value) + 1 > sizeof(path))
+ 			continue;
+-
+-		strcpy(path, FIRMWARE_BASE);
++		strcpy(path, firmware_sysfs_path);
++		strcat(path, "/");
+ 		strcat(path, dirname(firmware_value));
+ 
+ 		fw_dir = opendir(path);
+ 		if (!fw_dir) {
+-			warn("Cannot open %s", path);
+-			continue;
++			warn("Cannot open sysfs path: [%s]", path);
++
++			/* retry with base path */
++			if (strlen(FIRMWARE_BASE) + strlen(firmware_value) + 1 > sizeof(path))
++				continue;
++			strcpy(path, FIRMWARE_BASE);
++			strcat(path, dirname(firmware_value));
++
++			fw_dir = opendir(path);
++			if (!fw_dir) {
++				warn("Cannot open base path: [%s]", path);
++				continue;
++			}
+ 		}
+ 
+ 		while ((fw_de = readdir(fw_dir)) != NULL) {
+@@ -308,14 +341,15 @@ static int pd_enumerate_jsons(struct assoc *json_set)
+ 			if (!found)
+ 				continue;
+ 
+-			if (strlen(FIRMWARE_BASE) + strlen(firmware_value) + 1 +
+-			    strlen(fw_de->d_name) + 1 > sizeof(path))
+-					continue;
++			if (strlen(path) + 1 + strlen(fw_de->d_name) + 1 > sizeof(json_path))
++				continue;
+ 
+ 			strcpy(json_path, path);
+ 			strcat(json_path, "/");
+ 			strcat(json_path, fw_de->d_name);
+ 
++			printf(" found: %s\n", json_path);
++
+ 			assoc_set(json_set, json_path, NULL);
+ 		}
+ 

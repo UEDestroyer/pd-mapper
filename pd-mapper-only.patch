@@ -1,0 +1,122 @@
+From e3ce9c52d45d3d69748f649989808837ff9f04bf Mon Sep 17 00:00:00 2001
+From: Alexey Minnekhanov <alexeymin@postmarketos.org>
+Date: Mon, 8 Jan 2024 04:55:54 +0300
+Subject: [PATCH] Use firmware path from sysfs
+
+Some distributions override firmware loading path
+using /sys/module/firmware_class/parameters/path.
+Kernel supports it, make pd-mapper support it, too.
+
+Signed-off-by: Alexey Minnekhanov <alexeymin@postmarketos.org>
+---
+ pd-mapper.c | 51 +++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 43 insertions(+), 8 deletions(-)
+
+diff --git a/pd-mapper.c b/pd-mapper.c
+index 65c4b80..6399ed0 100644
+--- a/pd-mapper.c
++++ b/pd-mapper.c
+@@ -205,6 +205,25 @@ static char *known_extensions[] = {
+   NULL,
+ };
+ 
++char* read_fw_path_from_sysfs(void)
++{
++	FILE *f = fopen("/sys/module/firmware_class/parameters/path", "rt");
++	char *fwpath = (char* )malloc(PATH_MAX);
++	if (!fwpath)
++	{
++		fprintf(stderr, "Allocation failure");
++		exit(1);
++	}
++	int size = fread(fwpath, sizeof(fwpath[0]), PATH_MAX, f);
++	/* truncate newline */
++	if (size > 0) {
++		fwpath[size - 1] = '\0';
++	}
++	fclose(f);
++	printf("fw path from sysfs: [%s]\n", fwpath);
++	return fwpath;
++}
++
+ static int pd_enumerate_jsons(struct assoc *json_set)
+ {
+ 	char firmware_value[PATH_MAX];
+@@ -220,6 +239,8 @@ static int pd_enumerate_jsons(struct assoc *json_set)
+ 	size_t len;
+ 	size_t n;
+ 
++	char *firmware_sysfs_path = read_fw_path_from_sysfs();
++
+ 	class_fd = open("/sys/class/remoteproc", O_RDONLY | O_DIRECTORY);
+ 	if (class_fd < 0) {
+ 		warn("failed to open remoteproc class");
+@@ -254,16 +275,28 @@ static int pd_enumerate_jsons(struct assoc *json_set)
+ 
+ 		firmware_value[n] = '\0';
+ 
+-		if (strlen(FIRMWARE_BASE) + strlen(firmware_value) + 1 > sizeof(path))
++		/* first try to open path from sysfs */
++		if (strlen(firmware_sysfs_path) + 1 + strlen(firmware_value) + 1 > sizeof(path))
+ 			continue;
+-
+-		strcpy(path, FIRMWARE_BASE);
++		strcpy(path, firmware_sysfs_path);
++		strcat(path, "/");
+ 		strcat(path, dirname(firmware_value));
+ 
+ 		fw_dir = opendir(path);
+ 		if (!fw_dir) {
+-			warn("Cannot open %s", path);
+-			continue;
++			warn("Cannot open sysfs path: [%s]", path);
++
++			/* retry with base path */
++			if (strlen(FIRMWARE_BASE) + strlen(firmware_value) + 1 > sizeof(path))
++				continue;
++			strcpy(path, FIRMWARE_BASE);
++			strcat(path, dirname(firmware_value));
++
++			fw_dir = opendir(path);
++			if (!fw_dir) {
++				warn("Cannot open base path: [%s]", path);
++				continue;
++			}
+ 		}
+ 
+ 		while ((fw_de = readdir(fw_dir)) != NULL) {
+@@ -287,14 +320,15 @@ static int pd_enumerate_jsons(struct assoc *json_set)
+ 			if (!found)
+ 				continue;
+ 
+-			if (strlen(FIRMWARE_BASE) + strlen(firmware_value) + 1 +
+-			    strlen(fw_de->d_name) + 1 > sizeof(path))
+-					continue;
++			if (strlen(path) + 1 + strlen(fw_de->d_name) + 1 > sizeof(json_path))
++				continue;
+ 
+ 			strcpy(json_path, path);
+ 			strcat(json_path, "/");
+ 			strcat(json_path, fw_de->d_name);
+ 
++			printf(" found: %s\n", json_path);
++
+ 			assoc_set(json_set, json_path, NULL);
+ 		}
+ 
+@@ -304,6 +338,7 @@ static int pd_enumerate_jsons(struct assoc *json_set)
+ 	closedir(class_dir);
+ close_class:
+ 	close(class_fd);
++	free(firmware_sysfs_path);
+ 
+ 	return 0;
+ }
+-- 
+2.43.0
+
+
+
+
+
+
